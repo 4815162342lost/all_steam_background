@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import requests
+import sqlite3
 import sys
 import time
 from bs4 import BeautifulSoup
@@ -16,10 +17,15 @@ menu_bar=QMenuBar(window)
 menu_bar.setFixedSize(2000,25)
 menu_file=menu_bar.addMenu('&File')
 
+def window_close():
+	db_backrounds.commit()
+	window.close()
+
+#button_start.clicked.connect(start)
 exitButton = QAction('Exit', window)
 exitButton.setShortcut('Ctrl+Q')
 exitButton.setStatusTip('Exit application')
-exitButton.triggered.connect(window.close)
+exitButton.triggered.connect(window_close)
 menu_file.addAction(exitButton)
 
 chose_games=QComboBox(window)
@@ -65,7 +71,6 @@ def start():
 	"http://www.steamcardexchange.net/index.php?showcase-filter-su", "http://www.steamcardexchange.net/index.php?showcase-filter-vx", 
 	"http://www.steamcardexchange.net/index.php?showcase-filter-yz", "http://www.steamcardexchange.net/index.php?showcase-filter-09")
 
-	
 	game_link=get_games_link(urls[chose_games.currentIndex()])
 	games_count=len(game_link)
 	bar.setMaximum(int(games_count))
@@ -91,7 +96,7 @@ def get_games_link(url):
 	r=requests.get(url)
 	game_link0=[]
 	if r.status_code == 200:
-		soup=BeautifulSoup(r.text)
+		soup=BeautifulSoup(r.text, "html.parser")
 		for game_list in soup.find_all(class_="showcase-game-item"):
 			game_link=game_list.a.get("href")
 			game_link0.append(game_link)
@@ -102,7 +107,7 @@ def get_backgrounds_link_and_downloading_on_game_path(url):
 	url="http://www.steamcardexchange.net/"+url
 	r=requests.get(url)
 	if r.status_code==200:
-		soup=BeautifulSoup(r.text)
+		soup=BeautifulSoup(r.text, "html.parser")
 		game_name=soup.find(class_="game-title").h1.string
 		path=create_path(game_name)
 		counter=0
@@ -118,13 +123,12 @@ def get_backgrounds_link_and_downloading_on_backgrounds_path(url,file_end):
 	global big_counter
 	counter=big_counter
 	if r.status_code==200:
-		soup=BeautifulSoup(r.text)
+		soup=BeautifulSoup(r.text, "html.parser")
 		game_name=soup.find(class_="game-title").h1.string
 		for background in soup.find_all(class_="showcase-element-container background"):
 			for background_link in background.find_all(class_="button-blue market"):
 				url=background_link.get("href")
 				store_link=url.replace("(Profile Background)","")
-				save_background_link_to_steam_trade_store(store_link, counter,file_end)
 				counter+=1
 			for background_link in background.find_all(class_="element-link-right"):
 				url=background_link.get("href")
@@ -134,24 +138,20 @@ def get_backgrounds_link_and_downloading_on_backgrounds_path(url,file_end):
 		print("Counter brocken. Fix it.")
 		big_counter=counter+2
 
-def save_background_link_to_steam_trade_store(link,number,path):
-	f=open("list_link_"+path+".log","a")
-	f.write(str(number)+"\n"+str(link)+"\n")
-	f.close
-
 def save_file(url, number, path,game_name):
 	"""Function for download file and save to disk"""
-	try:
-		r=requests.get(url)
-		if r.status_code==200:
-			path=path+"/"+str(number)
-			f=open(str(path)+".jpg", "wb")
-			f.write(r.content)
-			f.close
-		else:
+	if add_to_db(game_name, url)!=False:
+		try:
+			r=requests.get(url)
+			if r.status_code==200:
+				path=path+"/"+str(number)
+				f=open(str(path)+".jpg", "wb")
+				f.write(r.content)
+				f.close
+			else:
+				error_to_log(url,1,game_name)
+		except requests.exceptions.ConnectionError:
 			error_to_log(url,1,game_name)
-	except requests.exceptions.ConnectionError:
-		error_to_log(url,1,game_name)
 
 def error_to_log(url, type,game_name):
 	"""Function for save errors on log file"""
@@ -174,6 +174,29 @@ def create_path(path_name):
 		error_to_log(path_name,0, None)
 	return pwd+"/"+path_name
 
+def add_to_db(game_name, url):
+	"""Function to add record on db"""
+	global counter_my
+	cursor.execute("select exists(select url from backgrounds where url=?)", (url,))
+	need_add=cursor.fetchone()[0]
+	if need_add==0:
+		cursor.execute("insert into backgrounds values (?,?)", (url, game_name))
+		if counter_my==10:
+			db_backrounds.commit()
+			counter_my=0
+		counter_my+=1
+	else:
+		return False
+
+counter_my=0
 button_start.clicked.connect(start)
+db_backrounds=sqlite3.connect("./backgrounds.db")
+cursor=db_backrounds.cursor()
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+tables=[row[0] for row in cursor.fetchall()]
+if "backgrounds" in tables:
+	print("Table backgrounds exists")
+else:
+	cursor.execute("create table backgrounds (url text, game_name text, uniqUE(url));")
 window.show()
 steam_app.exec_()
